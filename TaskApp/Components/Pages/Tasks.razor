@@ -1,0 +1,390 @@
+@page "/"
+@using TaskApp.Models
+@inject TaskService TaskService
+
+<PageTitle>Mis tareas</PageTitle>
+
+<main class="page">
+    <section class="card">
+        <header class="card-header">
+            <div>
+                <h1>Mis tareas</h1>
+                <p class="summary">@Summary</p>
+            </div>
+
+            @if (!loading && tasks.Count > 0)
+            {
+                <div class="progress" role="img" aria-label="@($"{DoneCount} de {tasks.Count} completadas")">
+                    <svg viewBox="0 0 36 36" aria-hidden="true">
+                        <circle class="ring-bg" cx="18" cy="18" r="15.5" />
+                        <circle class="ring-fg" cx="18" cy="18" r="15.5"
+                                stroke-dasharray="@($"{RingCircumference * ProgressFraction:0.##} {RingCircumference:0.##}")" />
+                    </svg>
+                    <span class="progress-text">@((int)Math.Round(ProgressFraction * 100))%</span>
+                </div>
+            }
+        </header>
+
+        <form class="add" @onsubmit="AddAsync" @onsubmit:preventDefault>
+            <input class="add-input"
+                   type="text"
+                   maxlength="@TaskService.MaxTitleLength"
+                   placeholder="¿Qué necesitas hacer?"
+                   aria-label="Nueva tarea"
+                   @bind="newTitle"
+                   @bind:event="oninput" />
+            <button class="btn-add" type="submit" disabled="@(string.IsNullOrWhiteSpace(newTitle))">
+                Añadir
+            </button>
+        </form>
+
+        <div class="toolbar">
+            <div class="filters">
+                <button class="filter @(filter == Filter.All ? "is-active" : null)"
+                        @onclick="() => filter = Filter.All">Todas <span>@tasks.Count</span></button>
+                <button class="filter @(filter == Filter.Pending ? "is-active" : null)"
+                        @onclick="() => filter = Filter.Pending">Pendientes <span>@PendingCount</span></button>
+                <button class="filter @(filter == Filter.Done ? "is-active" : null)"
+                        @onclick="() => filter = Filter.Done">Hechas <span>@DoneCount</span></button>
+            </div>
+
+            @if (DoneCount > 0 && !confirmingClear)
+            {
+                <button class="link-danger" @onclick="() => confirmingClear = true">Limpiar hechas</button>
+            }
+        </div>
+
+        @if (confirmingClear)
+        {
+            <div class="confirm-bar" role="alert">
+                <span>¿Eliminar @DoneCount tarea@(DoneCount == 1 ? "" : "s") completada@(DoneCount == 1 ? "" : "s")?</span>
+                <div class="confirm-actions">
+                    <button class="btn-danger" @onclick="ClearCompletedAsync">Sí, eliminar</button>
+                    <button class="btn-ghost" @onclick="() => confirmingClear = false">Cancelar</button>
+                </div>
+            </div>
+        }
+
+        @if (error is not null)
+        {
+            <div class="error" role="alert">
+                <span>@error</span>
+                <button aria-label="Cerrar" @onclick="() => error = null">✕</button>
+            </div>
+        }
+
+        @if (loading)
+        {
+            <ul class="list skeleton" aria-hidden="true">
+                @for (var i = 0; i < 3; i++)
+                {
+                    <li class="skeleton-row"><span class="skeleton-check"></span><span class="skeleton-line"></span></li>
+                }
+            </ul>
+        }
+        else if (Visible.Count == 0)
+        {
+            <div class="empty">
+                <div class="empty-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M9 11l3 3 8-8" />
+                        <path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9" />
+                    </svg>
+                </div>
+                <p class="empty-title">@EmptyTitle</p>
+                <p class="empty-hint">@EmptyHint</p>
+            </div>
+        }
+        else
+        {
+            <ul class="list">
+                @foreach (var task in Visible)
+                {
+                    <li class="task @(task.IsDone ? "is-done" : null)" @key="task.Id">
+                        <input class="task-check"
+                               type="checkbox"
+                               checked="@task.IsDone"
+                               aria-label="@($"Marcar «{task.Title}» como {(task.IsDone ? "pendiente" : "hecha")}")"
+                               @onchange="e => ToggleAsync(task, (bool)e.Value!)" />
+
+                        @if (editingId == task.Id)
+                        {
+                            <input class="edit-input"
+                                   type="text"
+                                   maxlength="@TaskService.MaxTitleLength"
+                                   aria-label="Editar tarea"
+                                   @ref="editInput"
+                                   @bind="editTitle"
+                                   @bind:event="oninput"
+                                   @onkeydown="OnEditKeyDown"
+                                   @onblur="CommitEditAsync" />
+
+                            <div class="row-actions">
+                                <button class="btn-ghost" @onmousedown:preventDefault @onclick="CommitEditAsync">Guardar</button>
+                                <button class="btn-ghost" @onmousedown:preventDefault @onclick="CancelEdit">Cancelar</button>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="task-body">
+                                <span class="task-title" @ondblclick="() => StartEdit(task)">@task.Title</span>
+                                <span class="task-meta">@FormatCreated(task.CreatedAt)</span>
+                            </div>
+
+                            @if (deleteId == task.Id)
+                            {
+                                <div class="row-actions confirm-inline">
+                                    <span>¿Eliminar?</span>
+                                    <button class="btn-danger" @onclick="() => DeleteAsync(task)">Sí</button>
+                                    <button class="btn-ghost" @onclick="() => deleteId = null">No</button>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="row-actions">
+                                    <button class="icon-btn" title="Editar" aria-label="Editar" @onclick="() => StartEdit(task)">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                                            <path d="M12 20h9" />
+                                            <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                                        </svg>
+                                    </button>
+                                    <button class="icon-btn danger" title="Eliminar" aria-label="Eliminar" @onclick="() => deleteId = task.Id">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                                            <path d="M3 6h18" />
+                                            <path d="M8 6V4h8v2" />
+                                            <path d="M19 6l-1 14H6L5 6" />
+                                            <path d="M10 11v5M14 11v5" />
+                                        </svg>
+                                    </button>
+                                </div>
+                            }
+                        }
+                    </li>
+                }
+            </ul>
+        }
+    </section>
+
+    <p class="hint">Doble clic en una tarea para editarla · Enter guarda, Esc cancela</p>
+</main>
+
+@code {
+    private enum Filter { All, Pending, Done }
+
+    private const double RingCircumference = 2 * Math.PI * 15.5;
+
+    private List<TaskItem> tasks = [];
+    private Filter filter = Filter.All;
+    private string newTitle = string.Empty;
+    private string editTitle = string.Empty;
+    private bool loading = true;
+    private string? error;
+    private int? editingId;
+    private int? deleteId;
+    private bool confirmingClear;
+    private bool focusEdit;
+    private ElementReference editInput;
+
+    private int DoneCount => tasks.Count(t => t.IsDone);
+    private int PendingCount => tasks.Count - DoneCount;
+    private double ProgressFraction => tasks.Count == 0 ? 0 : (double)DoneCount / tasks.Count;
+
+    private List<TaskItem> Visible => filter switch
+    {
+        Filter.Pending => tasks.Where(t => !t.IsDone).ToList(),
+        Filter.Done => tasks.Where(t => t.IsDone).ToList(),
+        _ => tasks
+    };
+
+    private string Summary => loading
+        ? "Cargando…"
+        : tasks.Count == 0
+            ? "Todavía no hay nada por aquí"
+            : $"{PendingCount} pendiente{(PendingCount == 1 ? "" : "s")} · {DoneCount} hecha{(DoneCount == 1 ? "" : "s")}";
+
+    private string EmptyTitle => filter switch
+    {
+        Filter.Pending => "Nada pendiente 🎉",
+        Filter.Done => "Aún no has completado nada",
+        _ => "Tu lista está vacía"
+    };
+
+    private string EmptyHint => filter switch
+    {
+        Filter.Pending => "Todo lo que anotes aquí ya está hecho.",
+        Filter.Done => "Marca una tarea como hecha y aparecerá en esta vista.",
+        _ => "Añade tu primera tarea con el campo de arriba."
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+        loading = false;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (focusEdit && editingId is not null)
+        {
+            focusEdit = false;
+            try
+            {
+                await editInput.FocusAsync();
+            }
+            catch (InvalidOperationException)
+            {
+                // El elemento aún no está en el DOM; el usuario puede hacer clic.
+            }
+        }
+    }
+
+    private async Task ReloadAsync()
+    {
+        try
+        {
+            tasks = await TaskService.GetAllAsync();
+        }
+        catch (Exception ex)
+        {
+            error = $"No se pudieron cargar las tareas: {ex.Message}";
+        }
+    }
+
+    private async Task AddAsync()
+    {
+        var title = newTitle.Trim();
+        if (title.Length == 0) return;
+
+        try
+        {
+            var created = await TaskService.AddAsync(title);
+            tasks.Insert(0, created);
+            newTitle = string.Empty;
+            filter = Filter.All;
+            Sort();
+        }
+        catch (Exception ex)
+        {
+            error = $"No se pudo añadir la tarea: {ex.Message}";
+        }
+    }
+
+    private async Task ToggleAsync(TaskItem task, bool isDone)
+    {
+        try
+        {
+            var updated = await TaskService.SetDoneAsync(task.Id, isDone);
+            if (updated is null)
+            {
+                await ReloadAsync();
+                return;
+            }
+
+            task.IsDone = updated.IsDone;
+            task.CompletedAt = updated.CompletedAt;
+            Sort();
+        }
+        catch (Exception ex)
+        {
+            error = $"No se pudo actualizar la tarea: {ex.Message}";
+        }
+    }
+
+    private async Task StartEdit(TaskItem task)
+    {
+        deleteId = null;
+        editingId = task.Id;
+        editTitle = task.Title;
+        focusEdit = true;
+        await Task.CompletedTask;
+    }
+
+    private void CancelEdit()
+    {
+        editingId = null;
+        editTitle = string.Empty;
+    }
+
+    private async Task OnEditKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+            await CommitEditAsync();
+        else if (e.Key == "Escape")
+            CancelEdit();
+    }
+
+    private async Task CommitEditAsync()
+    {
+        if (editingId is not { } id) return;
+
+        var task = tasks.FirstOrDefault(t => t.Id == id);
+        var title = editTitle.Trim();
+
+        if (task is null || title.Length == 0 || title == task.Title)
+        {
+            CancelEdit();
+            return;
+        }
+
+        try
+        {
+            var updated = await TaskService.RenameAsync(id, title);
+            if (updated is not null)
+                task.Title = updated.Title;
+
+            CancelEdit();
+        }
+        catch (Exception ex)
+        {
+            error = $"No se pudo guardar el cambio: {ex.Message}";
+        }
+    }
+
+    private async Task DeleteAsync(TaskItem task)
+    {
+        deleteId = null;
+
+        try
+        {
+            await TaskService.DeleteAsync(task.Id);
+            tasks.RemoveAll(t => t.Id == task.Id);
+        }
+        catch (Exception ex)
+        {
+            error = $"No se pudo eliminar la tarea: {ex.Message}";
+        }
+    }
+
+    private async Task ClearCompletedAsync()
+    {
+        confirmingClear = false;
+
+        try
+        {
+            await TaskService.ClearCompletedAsync();
+            tasks.RemoveAll(t => t.IsDone);
+            if (filter == Filter.Done) filter = Filter.All;
+        }
+        catch (Exception ex)
+        {
+            error = $"No se pudieron eliminar las tareas: {ex.Message}";
+        }
+    }
+
+    private void Sort() =>
+        tasks = tasks.OrderBy(t => t.IsDone).ThenByDescending(t => t.CreatedAt).ToList();
+
+    private static string FormatCreated(DateTime utc)
+    {
+        var local = utc.ToLocalTime();
+        var today = DateTime.Today;
+
+        if (local.Date == today)
+            return $"hoy, {local:HH:mm}";
+        if (local.Date == today.AddDays(-1))
+            return "ayer";
+        if (local.Year == today.Year)
+            return local.ToString("d MMM");
+        return local.ToString("d MMM yyyy");
+    }
+}

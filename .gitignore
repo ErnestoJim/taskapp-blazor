@@ -1,0 +1,16 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+.vscode/
+
+# Base de datos local
+TaskApp/App_Data/
+*.db
+*.db-shm
+*.db-wal
+
+# Test results
+TestResults/
